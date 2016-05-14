@@ -59,7 +59,8 @@ int set_interface_attribs (int fd, int speed, int parity){
   return 0;
 }
 
-Joy2Ser::Joy2Ser(const char * a, unsigned int b, const char * p){
+Joy2Ser::Joy2Ser(const char * a, unsigned int b, const char * p, bool ard){
+  arduino=ard;
   port=a;
   baud_rate=b;
   tcp_port=p;
@@ -105,16 +106,20 @@ Joy2Ser::Joy2Ser(const char * a, unsigned int b, const char * p){
 
   bind(connfdC, resC->ai_addr, resC->ai_addrlen);
   listen(connfdC, BACKLOG);
-  
-  serrfd = open(a, O_RDWR | O_NOCTTY | O_SYNC);
-  if (serrfd < 0)
-    {
-      cout<<"error opening serial "<<strerror(errno)<<endl;
-      exit(1);
-    }
-  
-  set_interface_attribs (serrfd, baud_rate, 0);  // set
 
+  if(arduino){ // if we are using arduino we need serial
+    serrfd = open(a, O_RDWR | O_NOCTTY | O_SYNC);
+    if (serrfd < 0)
+      {
+	cout<<"error opening serial "<<strerror(errno)<<endl;
+	exit(1);
+      }
+    
+    set_interface_attribs (serrfd, baud_rate, 0);  // set
+  }
+
+  // message queues
+  
   key_t keyC = ftok("/home/aeshma/joy2ser/serial_serv", '1');
   key_t keyJ = ftok("/home/aeshma/joy2ser/serial_serv", '2');
   msqidC = msgget(keyC, 0666 | IPC_CREAT);
@@ -140,7 +145,8 @@ Joy2Ser::~Joy2Ser(){
   close(listenfd);
   close(connfdC);
   close(listenfdC); 
-  close(serrfd);
+  if(arduino)
+    close(serrfd);
   slog.close();
   slog<<"closed the file"<<endl;
 }
@@ -188,7 +194,7 @@ bool Joy2Ser::try_catch_message(int th, unsigned int & data){
   return control;
 }
 
-bool Joy2Ser::SerMessanger(js_event jse){
+bool Joy2Ser::SerMessanger(){
   
   stringstream sti;
   string name;
@@ -248,7 +254,7 @@ void Joy2Ser::executioner(int i){
    
     while (control){
       socklen_t addr_size;
-      struct  js_event jse;
+      //struct  js_event jse;
     
       read_fds = master; // copy it
      
@@ -288,21 +294,23 @@ void Joy2Ser::executioner(int i){
 		slog<<"num bytes read "<<num<<endl;
 		if(num>0){ // read as much as you can
 		  if(jse.type == JS_EVENT_AXIS){
-		    control1= this->SerMessanger(jse); //we send it over serial line
-		    if(!control1){
-		      slog<<"serial is down"<<endl;
-		      close(serrfd);
-		      sleep(1);
-		      slog<<"reopen serial"<<endl;
-		      serrfd = open(port, O_RDWR | O_NOCTTY | O_SYNC);
-		      if (serrfd < 0)
-			{
-			  slog<<"error opening serial "<<strerror(errno)<<endl;
-			  exit(1);
-			}
-		      sleep(1); //required to make flush work, for some reason
-		      tcflush(serrfd,TCIOFLUSH);
-		      set_interface_attribs (serrfd, baud_rate, 0);  // set
+		    if(arduino){
+		      control1= this->SerMessanger(); //we send it over serial line
+		      if(!control1){
+			slog<<"serial is down"<<endl;
+			close(serrfd);
+			sleep(1);
+			slog<<"reopen serial"<<endl;
+			serrfd = open(port, O_RDWR | O_NOCTTY | O_SYNC);
+			if (serrfd < 0)
+			  {
+			    slog<<"error opening serial "<<strerror(errno)<<endl;
+			    exit(1);
+			  }
+			sleep(1); //required to make flush work, for some reason
+			tcflush(serrfd,TCIOFLUSH);
+			set_interface_attribs (serrfd, baud_rate, 0);  // set
+		      }
 		    }
 		  }
 		}
@@ -345,7 +353,7 @@ void Joy2Ser::executioner(int i){
   
     while (control){
       socklen_t addr_size;
-      struct  js_event jse;
+      //struct  js_event jse;
       
       read_fds = master; // copy it
       
@@ -415,6 +423,7 @@ int main(int argc, char* argv[])
   int baud_rate=115200; // default baud rate
   const char * client="192.168.1.79"; // replace it with a list of clients
   string figa;
+  bool ard=true; // the default is to use arduino
   
   for (int i=0; i<argc; i++){
     cout<< argv[i]<<endl;
@@ -433,9 +442,11 @@ int main(int argc, char* argv[])
       baud_rate=atoi(argv[i+1]);
     else if(figa=="--port")
       port=argv[i+1];
+    else if(figa=="--noard")
+      ard=false;
   }
 
-  Joy2Ser * joy = new Joy2Ser(serial_name,baud_rate,port);
+  Joy2Ser * joy = new Joy2Ser(serial_name,baud_rate,port,ard);
   joy->openthread();
   delete joy;
   return 0;

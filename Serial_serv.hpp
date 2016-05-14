@@ -52,6 +52,7 @@ class Joy2Ser
  private:
   boost::thread  thJS; // thread for joystick to serial 
   boost::thread  thC; // cpu control thread
+  struct  js_event jse;
   const char * port; // the serial port
   const char * joyn; // joystick name
   int fdJS; // joystick file descriptor
@@ -62,15 +63,16 @@ class Joy2Ser
   struct sockaddr_in serv_addr, client_addr;
   struct addrinfo hints, hintsC, *res, *resC;
   int msqidC, msqidJ;
+  bool arduino;
   
  public:
-  Joy2Ser(const char * a, unsigned int b, const char * p);
+  Joy2Ser(const char * a, unsigned int b, const char * p, bool ard);
   ~Joy2Ser();
   void synchronize_cpu(); // waits for cpu threads to complete
   void openthread();
   bool try_catch_message(int th, unsigned int & mess);
   int ship_message(unsigned int mess, int th);
-  bool SerMessanger(js_event jse);
+  bool SerMessanger();
   void executioner(int i); // listen for messages on thread 
 };
 

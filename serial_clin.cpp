@@ -314,11 +314,15 @@ bool Joy2Ser::readFds(int th){
   string s;
   bool control=true;
   twait.tv_sec=1;
-  twait.tv_usec=1;
-  
+  twait.tv_usec=0;
+
+  FD_ZERO(&write_fds);    // clear the master and temp sets
+  FD_ZERO(&read_fds);
+  cout<<"Im read fds"<<endl;
   if(th==1){
     read_fds=masterreadC;
     fdm=fdmaxC;
+    cout<<"fdm "<<fdm<<endl;
   }
   else{
     read_fds=masterread;
@@ -329,7 +333,8 @@ bool Joy2Ser::readFds(int th){
     cout<<"error select"<<endl;
     control=false;
   }
-    
+
+  cout<<"we passed select"<<endl;
   if(FD_ISSET(0, &read_fds) && th==1){
 
     cout<<"ready for reading"<<endl;
@@ -549,7 +554,8 @@ bool Joy2Ser::isConnected(int th, int & result){
 void Joy2Ser::executionerC(){
   bool control=true;
   int result=0;        // maximum file descriptor number
-      
+
+  cout<<"executioner C"<<endl;
    
   FD_ZERO(&masterwriteC);    // clear the master and temp sets
   FD_ZERO(&masterreadC);
@@ -561,13 +567,16 @@ void Joy2Ser::executionerC(){
   while (control){
 
     control=this->isConnected(1, result);
-    
+
+    cout<<"passed connected"<<endl;
     
     // check for messages from other thread
     /**************************************************************************************************/
     control=this->internalMess(1, result);
 
+    cout<<"passed internak ness"<<endl;
     control=this->readFds(1);
+    cout<<"passed read"<<endl;
   }
 }
 
