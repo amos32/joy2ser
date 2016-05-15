@@ -71,6 +71,7 @@ bool Joy2Ser::parse(string s){
       const char * ser="/dev/rfcomm0";
       int baudn =115200;
       char * addrn, * sern;
+      bool ar=true;
       
       for(int j=1; j<SplitVec.size()-1;j++){
 	if(SplitVec[j]=="--host"){
@@ -90,6 +91,9 @@ bool Joy2Ser::parse(string s){
 	  baudn=atoi(bauds);
 	  delete bauds;
 	}
+	if(SplitVec[j]=="--noard"){ // not connected to arduino
+	  ar=false;
+	}
       }
       char * tcp_portC;
       tcp_portC= string2charpN(tcp_port,1);
@@ -102,7 +106,7 @@ bool Joy2Ser::parse(string s){
       if(tcp_portC!=NULL) // this is not right 
 	delete tcp_portC;
       
-      result=this->startRemote(addr,"aeshma","qcnfnded666",ser, baudn); 
+      result=this->startRemote(addr,"aeshma","qcnfnded666",ser, baudn,ar); 
  
       if (result==0){
 	cout<<"client started succesfully"<<endl;
@@ -138,7 +142,7 @@ void Joy2Ser::ExecuteCmdResponse(const char* cmd, ssh_session ss1)
   }
 }
 
-int Joy2Ser::startRemote(const char* name,  const char* user, const char* pw, const char * serialN, unsigned int baudN) 
+int Joy2Ser::startRemote(const char* name,  const char* user, const char* pw, const char * serialN, unsigned int baudN, bool ar) 
 {
 
   int rc=-11;
@@ -177,6 +181,9 @@ int Joy2Ser::startRemote(const char* name,  const char* user, const char* pw, co
     stringstream stri;
     string sout;
     stri<<"/home/aeshma/joy2ser/serial_serv --serial "<<serialN<<" --baud "<<baudN<<" --port "<<tcp_port;
+    if(!ar)
+      stri<<" --noard "; // no arduino
+    
     sout=stri.str();
     cout<<sout<<endl;
     
@@ -318,11 +325,10 @@ bool Joy2Ser::readFds(int th){
 
   FD_ZERO(&write_fds);    // clear the master and temp sets
   FD_ZERO(&read_fds);
-  cout<<"Im read fds"<<endl;
+
   if(th==1){
     read_fds=masterreadC;
     fdm=fdmaxC;
-    cout<<"fdm "<<fdm<<endl;
   }
   else{
     read_fds=masterread;
@@ -334,7 +340,6 @@ bool Joy2Ser::readFds(int th){
     control=false;
   }
 
-  cout<<"we passed select"<<endl;
   if(FD_ISSET(0, &read_fds) && th==1){
 
     cout<<"ready for reading"<<endl;
@@ -554,8 +559,6 @@ bool Joy2Ser::isConnected(int th, int & result){
 void Joy2Ser::executionerC(){
   bool control=true;
   int result=0;        // maximum file descriptor number
-
-  cout<<"executioner C"<<endl;
    
   FD_ZERO(&masterwriteC);    // clear the master and temp sets
   FD_ZERO(&masterreadC);
@@ -567,16 +570,13 @@ void Joy2Ser::executionerC(){
   while (control){
 
     control=this->isConnected(1, result);
-
-    cout<<"passed connected"<<endl;
     
     // check for messages from other thread
     /**************************************************************************************************/
     control=this->internalMess(1, result);
 
-    cout<<"passed internak ness"<<endl;
     control=this->readFds(1);
-    cout<<"passed read"<<endl;
+
   }
 }
 

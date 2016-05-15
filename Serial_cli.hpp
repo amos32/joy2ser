@@ -79,7 +79,7 @@ class Joy2Ser
   int ship_message(unsigned int mess, int th);
   void executioner(int i); // listen for messages on thread i
   void executionerC();
-  int startRemote(const char* name,  const char* user, const char* pw, const char * serialN, unsigned int baudN) ;
+  int startRemote(const char* name,  const char* user, const char* pw, const char * serialN, unsigned int baudN, bool ar) ;
   void ExecuteCmdResponse(const char* cmd, ssh_session ss1); 
   bool parse(string ss);
   bool isConnected(int th, int & result);
