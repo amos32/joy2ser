@@ -73,7 +73,7 @@ bool Joy2Ser::parse(string s){
       char * addrn, * sern;
       bool ar=true;
       
-      for(int j=1; j<SplitVec.size()-1;j++){
+      for(int j=1; j<SplitVec.size();j++){
 	if(SplitVec[j]=="--host"){
 	  addrn = new char[SplitVec[j+1].length()+1];
 	  std::strcpy(addrn,SplitVec[j+1].c_str()); // to char*
@@ -180,9 +180,10 @@ int Joy2Ser::startRemote(const char* name,  const char* user, const char* pw, co
   if (rc == SSH_AUTH_SUCCESS || ssh_get_fd(ss1)!=-1 ){
     stringstream stri;
     string sout;
-    stri<<"/home/aeshma/joy2ser/serial_serv --serial "<<serialN<<" --baud "<<baudN<<" --port "<<tcp_port;
-    if(!ar)
-      stri<<" --noard "; // no arduino
+    if(ar)
+      stri<<"/home/aeshma/joy2ser/serial_serv --serial "<<serialN<<" --baud "<<baudN<<" --port "<<tcp_port;
+    else
+      stri<<"/home/aeshma/joy2ser/serial_serv --port "<<tcp_port<<" --noard "; // no arduino
     
     sout=stri.str();
     cout<<sout<<endl;

@@ -1,6 +1,7 @@
 #ifndef H_Joy2Sr
 #define H_Joy2Ser
 
+#include "PCA9685.h"
 #include <boost/algorithm/string.hpp>
 #include <sys/msg.h>
 #include <stddef.h>

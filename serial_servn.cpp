@@ -117,11 +117,28 @@ Joy2Ser::Joy2Ser(const char * a, unsigned int b, const char * p, bool ard){
     
     set_interface_attribs (serrfd, baud_rate, 0);  // set
   }
+  else{
+    pwm.init(1,0x42);
+    pwm.setPWMFreq (60);
+    pwm1.init(1,0x43);
+    pwm1.setPWMFreq (1500);
+    pwm.setPWM(0,0,MIDP); // center the three servos. Pan tilt steering
+    pwm.setPWM(1,0,MIDP);
+    pwm.setPWM(2,0,MIDP);
+    pwm1.setPWM(0,0,0); // zero the two DC motors
+    pwm1.setPWM(1,0,0);
+    wiringPiSetup () ;
+    pinMode (0, OUTPUT);
+    pinMode (2,OUTPUT);
+    key_t keyNA = ftok("/home/aeshma/joy2ser/serial_serv", '3'); // NO arduino queue
+    msqidNA = msgget(keyNA, 0666 | IPC_CREAT);
+  }
 
   // message queues
   
   key_t keyC = ftok("/home/aeshma/joy2ser/serial_serv", '1');
   key_t keyJ = ftok("/home/aeshma/joy2ser/serial_serv", '2');
+  
   msqidC = msgget(keyC, 0666 | IPC_CREAT);
   msqidJ = msgget(keyJ, 0666 | IPC_CREAT);
 
@@ -132,6 +149,8 @@ Joy2Ser::Joy2Ser(const char * a, unsigned int b, const char * p, bool ard){
 void Joy2Ser::openthread(){
   thJS = boost::thread(boost::bind(&Joy2Ser::executioner, this, 0));
   thC = boost::thread(boost::bind(&Joy2Ser::executioner, this, 1));
+  if(!arduino)
+    thNA = boost::thread(boost::bind(&Joy2Ser::NoArdLoop, this, 2)); // no arduino thread 
 }
 
 Joy2Ser::~Joy2Ser(){
@@ -147,14 +166,18 @@ Joy2Ser::~Joy2Ser(){
   close(listenfdC); 
   if(arduino)
     close(serrfd);
+  else{
+    thNA.join();
+    msgctl(msqidNA, IPC_RMID, NULL);
+  }
   slog.close();
   slog<<"closed the file"<<endl;
 }
 
 
-int Joy2Ser::ship_message(unsigned int mess, int th){
+int Joy2Ser::ship_message(unsigned int mess, int th, int num){
      
-  struct smessage messi={2,mess};
+  struct smessage messi={num ,mess};
 
   switch(th){
   case 0:
@@ -169,23 +192,29 @@ int Joy2Ser::ship_message(unsigned int mess, int th){
     else
       return 0;
     break;
+  case 2:
+    if(msgsnd(msqidNA, &messi, sizeof(mess), 0)<0)
+      return -1;
+    else
+      return 0;
+    break;
   }
 }
 
 
-bool Joy2Ser::try_catch_message(int th, unsigned int & data){
+bool Joy2Ser::try_catch_message(int th, unsigned int & data, int num){
   bool control=false;
   struct smessage pmb;
   
   switch(th){
   case 0:
-    if(msgrcv(msqidJ, &pmb, sizeof(unsigned int), 2, IPC_NOWAIT)>0){
+    if(msgrcv(msqidJ, &pmb, sizeof(unsigned int), num, IPC_NOWAIT)>0){
       control=true;
       data=pmb.mess;
     }
     break;
   case 1:
-    if(msgrcv(msqidC, &pmb, sizeof(unsigned int), 2, IPC_NOWAIT)>0){
+    if(msgrcv(msqidC, &pmb, sizeof(unsigned int), num, IPC_NOWAIT)>0){
       control=true;
       data=pmb.mess;
     }
@@ -213,7 +242,6 @@ bool Joy2Ser::SerMessanger(){
   inputstr[2] = val & 0xFF;
   inputstr[3] = 0xFF; // pad with zero, we want a divisor of buffer size
   slog<<"axis "<< (int) jse.number<<" this is what we got "<<val<<endl;
-  // try{
   int num;
   if((num=write(serrfd,inputstr,sizeof(inputstr)))>0){ // with no msg nosignal broken pipe will kill you
     slog<<"we wrote "<<num<<" bytes"<<endl;
@@ -227,8 +255,157 @@ bool Joy2Ser::SerMessanger(){
   return true;
 }
 
+bool Joy2Ser::NoArdMessanger(){
+
+  __s16 val;
+  struct jmessage joymess;
+
+  if(jse.number==2 || jse.number==5)
+    val = (__s16)(((float)(jse.value)/32767.0)*500.0+500.0);
+  else if(jse.number==3)
+    val = (__s16)(((float)(jse.value+32767)/(2.0*32767.0))*(SERVOMAX-SERVOMIN)+SERVOMIN);
+  else
+    val = (__s16)(((float)(jse.value)/32767.0)*25.0);
+  //val = (__s16)(((float)(jse.value)));
+  joymess.inputstr[0] = jse.number;
+  joymess.inputstr[1] = (val >> 8) & 0xFF;
+  joymess.inputstr[2] = val & 0xFF;
+  joymess.inputstr[3] = 0xFF; // pad with zero, we want a divisor of buffer size
+  slog<<"axis "<< (int) jse.number<<" this is what we got "<<val<<endl;
+
+  joymess.mtype=3; // data is type 3 and control is type 2
+  if(msgsnd(msqidNA, &joymess, sizeof(joymess), 0)<=0)
+    return false;
+  else
+    return true;
+  
+}
 
 
+
+void Joy2Ser::NoArdLoop(int i){
+ __u8 axis;
+  __s16 throttle=0;
+  __s16 throttle1=0;
+  __s16 throttle0=0;
+  __s16 throttlea=0;
+  __s16 res=25;
+  float mstep=1.0/((float) res);
+  __s16 throttle3=MIDP;
+  float pos = MIDP;    // variable to store the servo position
+  float pos1 = MIDP;
+  float step=0;
+  float step1=0;
+  float temp=MIDP;
+  float temp1=MIDP;
+  bool control=true;
+
+  struct jmessage joym;
+  
+  while(control){
+    unsigned int mess0;
+    if(this->Joy2Ser::try_catch_message(i, mess0,2)){
+      slog<<"this is what I got "<<mess0<<endl;
+      switch (mess0){
+      case TERMINATE:
+	slog<<"I have been hit"<<endl;
+	control=false;
+	break;
+      }
+    }
+
+    if(msgrcv(msqidNA, &joym, 4*sizeof(unsigned char), 3, IPC_NOWAIT)>0){    
+
+      axis=joym.inputstr[0];
+      if (axis==1)
+	throttle1 = (joym.inputstr[1] << 8) | joym.inputstr[2]; // pan
+      else  if (axis==0)
+	throttle0 = (joym.inputstr[1] << 8) | joym.inputstr[2]; // tilt
+      else if (axis==2 || axis==5)
+	throttlea = (joym.inputstr[1] )<<8 | (joym.inputstr[2]); // dc motor
+      else if (axis==3)
+	throttle3 = (joym.inputstr[1] )<<8 | (joym.inputstr[2]); // steering
+
+
+
+      if(axis==0) // tilt
+	step=mstep*(float) throttle0;
+  
+      if(axis==1)
+	step1=mstep*(float) throttle1;
+
+      if(axis==3)
+	pwm.setPWM(2, 0, throttle3);
+   
+      if(axis==2){
+        digitalWrite(0,LOW); //controls the direction the motor
+        digitalWrite(2,LOW);
+        //analogWrite(3,map(throttle,-32767,32767,0,155));
+        //analogWrite(5,map(throttle,-32767,32767,0,155));
+        pwm1.setPWM(0, 0, throttlea);
+        pwm1.setPWM(1, 0, throttlea);
+      }
+
+      if(axis==5){
+        digitalWrite(0,HIGH); //controls the direction the motor
+        digitalWrite(2,HIGH);
+        //analogWrite(3,map(throttle,-32767,32767,0,155));
+        //analogWrite(5,map(throttle,-32767,32767,0,155));
+        pwm1.setPWM(0, 0, throttlea);
+        pwm1.setPWM(1, 0, throttlea);
+      }
+      temp=(float) pos+step;
+      temp1=(float) pos1+step1;
+
+      if(temp>=SERVOMIN && temp<=SERVOMAX){
+	pos= temp;
+	pwm.setPWM(0, 0, (short) pos); 
+      }
+      else if(temp>SERVOMAX){
+	pos=SERVOMAX;
+      }
+      else if(temp<SERVOMIN){
+        pos=SERVOMIN;
+      }
+
+      if(temp1>=SERVOMIN && temp1<=SERVOMAX){
+	pos1=temp1; 
+	pwm.setPWM(1, 0, (short) pos1); 
+      }
+      else if(temp1>SERVOMAX){
+	pos1=SERVOMAX;
+      }
+      else if(temp1<SERVOMIN){
+        pos1=SERVOMIN;
+      }
+    }
+
+    temp=(float) pos+step;
+    temp1=(float) pos1+step1;
+
+    if(temp>=SERVOMIN && temp<=SERVOMAX){
+      pos=temp;
+      pwm.setPWM(0, 0, (short) pos); 
+    }
+    else if(temp>SERVOMAX){
+      pos=SERVOMAX;
+    }
+    else if(temp<SERVOMIN){
+      pos=SERVOMIN;
+    }
+
+    if(temp1>=SERVOMIN && temp1<=SERVOMAX){
+      pos1=temp1;
+      pwm.setPWM(1, 0, (short) pos1); 
+    }
+    else if(temp1>SERVOMAX){
+      pos1=SERVOMAX;
+    }
+    else if(temp1<SERVOMIN){
+      pos1=SERVOMIN;
+    }
+  }
+}
 
 void Joy2Ser::executioner(int i){
   bool control=true;
@@ -313,6 +490,11 @@ void Joy2Ser::executioner(int i){
 		      }
 		    }
 		  }
+		  else{
+		    cout<<"no arduino, I have not been implemented yet"<<endl;
+		    this->NoArdMessanger();
+
+		  }
 		}
 		else if (num<= 0 && (errno == EAGAIN || errno==0))
 		  control1=false;
@@ -329,7 +511,7 @@ void Joy2Ser::executioner(int i){
 	}
       }
       unsigned int mess0;
-      if(this->Joy2Ser::try_catch_message(i, mess0)){
+      if(this->Joy2Ser::try_catch_message(i, mess0,2)){
 	slog<<"this is what I got "<<mess0<<endl;
 	switch (mess0){
 	case TERMINATE:
@@ -383,7 +565,9 @@ void Joy2Ser::executioner(int i){
 	    cin>>s;
 	    if(s=="q"){
 	      control=false;
-	      this->ship_message(TERMINATE,0);
+	      this->ship_message(TERMINATE,0,2);
+	      if(!arduino)
+		this->ship_message(TERMINATE,2,2);
 	      break;
 	    }
 	  }
@@ -402,7 +586,9 @@ void Joy2Ser::executioner(int i){
 	      slog<<"we received this CONTROL "<<merda<<endl;
 	      if (merda==KILL){
 		control=false;
-		this->ship_message(TERMINATE,0);
+		this->ship_message(TERMINATE,0,2);
+		if(!arduino)
+		  this->ship_message(TERMINATE,2,2);
 		break;
 	      }
 	    }
@@ -452,4 +638,4 @@ int main(int argc, char* argv[])
   return 0;
 }
 /* g++  serial.cpp -o serial -lboost_system -lboost_thread -lpthread */
-// g++ serial_servn.cpp  -o serial_serv -lboost_system -lboost_thread -lpthread -lrt
+// g++ serial_servn.cpp  -o serial_serv -lboost_system -lboost_thread -lpthread -lrt -lssh -lPCA9685
