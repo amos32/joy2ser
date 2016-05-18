@@ -31,7 +31,7 @@
 
 
 #define NUM_MESSAGES 20
-#define KILL 101
+#define KILL 100
 #define SERVOMIN 150
 #define SERVOMAX 550
 #define MASTER 1

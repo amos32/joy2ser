@@ -71,9 +71,8 @@ bool Joy2Ser::parse(string s){
       const char * ser="/dev/rfcomm0";
       int baudn =115200;
       char * addrn, * sern;
-      bool ar=true;
       
-      for(int j=1; j<SplitVec.size();j++){
+      for(int j=1; j<SplitVec.size()-1;j++){
 	if(SplitVec[j]=="--host"){
 	  addrn = new char[SplitVec[j+1].length()+1];
 	  std::strcpy(addrn,SplitVec[j+1].c_str()); // to char*
@@ -91,9 +90,6 @@ bool Joy2Ser::parse(string s){
 	  baudn=atoi(bauds);
 	  delete bauds;
 	}
-	if(SplitVec[j]=="--noard"){ // not connected to arduino
-	  ar=false;
-	}
       }
       char * tcp_portC;
       tcp_portC= string2charpN(tcp_port,1);
@@ -106,7 +102,7 @@ bool Joy2Ser::parse(string s){
       if(tcp_portC!=NULL) // this is not right 
 	delete tcp_portC;
       
-      result=this->startRemote(addr,"root","qcnfnded666",ser, baudn,ar); 
+      result=this->startRemote(addr,"aeshma","qcnfnded666",ser, baudn); 
  
       if (result==0){
 	cout<<"client started succesfully"<<endl;
@@ -142,7 +138,7 @@ void Joy2Ser::ExecuteCmdResponse(const char* cmd, ssh_session ss1)
   }
 }
 
-int Joy2Ser::startRemote(const char* name,  const char* user, const char* pw, const char * serialN, unsigned int baudN, bool ar) 
+int Joy2Ser::startRemote(const char* name,  const char* user, const char* pw, const char * serialN, unsigned int baudN) 
 {
 
   int rc=-11;
@@ -180,11 +176,7 @@ int Joy2Ser::startRemote(const char* name,  const char* user, const char* pw, co
   if (rc == SSH_AUTH_SUCCESS || ssh_get_fd(ss1)!=-1 ){
     stringstream stri;
     string sout;
-    if(ar)
-      stri<<"/home/aeshma/joy2ser/serial_serv --serial "<<serialN<<" --baud "<<baudN<<" --port "<<tcp_port;
-    else
-      stri<<"/home/aeshma/joy2ser/serial_serv --port "<<tcp_port<<" --noard "; // no arduino
-    
+    stri<<"/home/aeshma/joy2ser/serial_serv --serial "<<serialN<<" --baud "<<baudN<<" --port "<<tcp_port;
     sout=stri.str();
     cout<<sout<<endl;
     
@@ -322,11 +314,8 @@ bool Joy2Ser::readFds(int th){
   string s;
   bool control=true;
   twait.tv_sec=1;
-  twait.tv_usec=0;
-
-  FD_ZERO(&write_fds);    // clear the master and temp sets
-  FD_ZERO(&read_fds);
-
+  twait.tv_usec=1;
+  
   if(th==1){
     read_fds=masterreadC;
     fdm=fdmaxC;
@@ -340,7 +329,7 @@ bool Joy2Ser::readFds(int th){
     cout<<"error select"<<endl;
     control=false;
   }
-
+    
   if(FD_ISSET(0, &read_fds) && th==1){
 
     cout<<"ready for reading"<<endl;
@@ -354,7 +343,7 @@ bool Joy2Ser::readFds(int th){
     while (read (fdJS, &jse, sizeof(jse)) > 0) {
       if(jse.type == JS_EVENT_AXIS){
 	int num=0;
-	cout<<"axis event "<<jse.value<<endl;
+	cout<<"axis event"<<endl;
 	if((num=send(connfd,&jse,sizeof(jse),MSG_NOSIGNAL))>0) // with no msg nosignal broken pipe will kill you
 	  cout<<"we wrote "<<num<<" bytes"<<endl;
 	else{ // the other side is down
@@ -372,9 +361,9 @@ bool Joy2Ser::readFds(int th){
     }
     if (errno != EAGAIN && errno!=0){
       cout<<"joy read error "<<strerror(errno)<<endl;
-      // close(fdJS);
-      //sleep(2);
-      //fdJS=open (joyn, O_RDONLY | O_NONBLOCK); //open the joystick
+      close(fdJS);
+      sleep(2);
+      fdJS=open (joyn, O_RDONLY | O_NONBLOCK); //open the joystick
     }
   }
   return control;
@@ -382,7 +371,11 @@ bool Joy2Ser::readFds(int th){
 
 void Joy2Ser::executioner(int i){
   bool control=true;
+  //bool control1=true;
+  //fd_set read_fds;  // temp file descriptor list for select()
+  //fd_set write_fds;
   int   result;        // maximum file descriptor number
+  //  struct timeval twait;
 
   fdJS=open(joyn, O_RDONLY | O_NONBLOCK); //open the joystick
   connfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
@@ -408,13 +401,56 @@ void Joy2Ser::executioner(int i){
   this->ship_message(CONNECT,1);// ask control thread to connect, control thread shouldnt ty to connect until the client is up
   
   while (control){
+    socklen_t addr_size;
+    // struct  js_event jse;
 
     /******************************************************************************************************************************************/
     control=this->isConnected(i, result);
 
     /**********************************************************************************************************************************************/
     control=this->readFds(i);
-   
+    /*
+    twait.tv_sec=1;
+    twait.tv_usec=1;
+    read_fds=masterread;
+    
+    if (select(fdmax+1, &read_fds, NULL, NULL, &twait) == -1) {
+      cout<<"error select"<<endl;
+      control=false;
+      break;
+    }
+    
+    
+    if(FD_ISSET(fdJS, &read_fds)){ // this should also be a function
+      cout<<"ready for reading"<<endl;
+      while (read (fdJS, &jse, sizeof(jse)) > 0) {
+	if(jse.type == JS_EVENT_AXIS){
+	  int num=0;
+	  cout<<"axis event"<<endl;
+	  if((num=send(connfd,&jse,sizeof(jse),MSG_NOSIGNAL))>0) // with no msg nosignal broken pipe will kill you
+	    cout<<"we wrote "<<num<<" bytes"<<endl;
+	  else{ // the other side is down
+	    cout<<"error error "<<strerror(errno)<<endl;
+	    control=false; // close the thread
+	    break;
+	    //result=connect(connfd, res->ai_addr, res->ai_addrlen);
+	  }
+	}
+	else if(jse.type == JS_EVENT_BUTTON){
+	  cout<<"button event "<<(int) jse.number<<endl;
+	  if((int) jse.value==1 && (int) jse.number==4)
+		this->ship_message(SHIT,1);
+	  
+	}
+      }
+      if (errno != EAGAIN && errno!=0){
+	cout<<"joy read error "<<strerror(errno)<<endl;
+	close(fdJS);
+	sleep(2);
+	fdJS=open (joyn, O_RDONLY | O_NONBLOCK); //open the joystick
+      }
+    }
+*/
     /********************************************************************************************************************/
 
     control=this->internalMess(i, result);
@@ -559,7 +595,16 @@ bool Joy2Ser::isConnected(int th, int & result){
 
 void Joy2Ser::executionerC(){
   bool control=true;
+  //  bool control1=true;
+  //fd_set read_fds;  // temp file descriptor list for select()
+  //fd_set write_fds;
   int result=0;        // maximum file descriptor number
+  // struct timeval twait;
+  
+  //  case 1: //this is the control thread
+  // string s;
+      
+      // connect to remote server
    
   FD_ZERO(&masterwriteC);    // clear the master and temp sets
   FD_ZERO(&masterreadC);
@@ -569,15 +614,40 @@ void Joy2Ser::executionerC(){
 
   
   while (control){
+    socklen_t addr_size;
+    struct  js_event jse;
 
     control=this->isConnected(1, result);
+    
     
     // check for messages from other thread
     /**************************************************************************************************/
     control=this->internalMess(1, result);
 
-    control=this->readFds(1);
+   
+    // check for input
 
+    /*****************************************************************************************************/
+
+    /*
+    twait.tv_sec=1; // this block should also be wrapped up in a function
+    twait.tv_usec=1;
+    read_fds=masterreadC;
+    //cout<<"going to select "<<fdmaxC<<endl;
+    
+    if (select(fdmaxC+1, &read_fds, NULL, NULL, &twait) == -1) {
+      cout<<"error select"<<endl;
+      control=false;
+      break;
+    }
+    
+    if(FD_ISSET(0, &read_fds)){
+      cout<<"ready for reading"<<endl;
+      getline(cin,s);
+      
+      control=this->parse(s);
+    }*/
+    control=this->readFds(1);
   }
 }
 

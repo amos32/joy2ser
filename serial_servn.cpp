@@ -111,25 +111,14 @@ Joy2Ser::Joy2Ser(const char * a, unsigned int b, const char * p, bool ard){
     serrfd = open(a, O_RDWR | O_NOCTTY | O_SYNC);
     if (serrfd < 0)
       {
-	cout<<"error opening serial "<<strerror(errno)<<endl;
+	slog<<"error opening serial "<<strerror(errno)<<endl;
 	exit(1);
       }
     
     set_interface_attribs (serrfd, baud_rate, 0);  // set
   }
   else{
-    pwm.init(1,0x42);
-    pwm.setPWMFreq (60);
-    pwm1.init(1,0x43);
-    pwm1.setPWMFreq (1500);
-    pwm.setPWM(0,0,MIDP); // center the three servos. Pan tilt steering
-    pwm.setPWM(1,0,MIDP);
-    pwm.setPWM(2,0,MIDP);
-    pwm1.setPWM(0,0,0); // zero the two DC motors
-    pwm1.setPWM(1,0,0);
-    wiringPiSetup () ;
-    pinMode (0, OUTPUT);
-    pinMode (2,OUTPUT);
+  
     key_t keyNA = ftok("/home/aeshma/joy2ser/serial_serv", '3'); // NO arduino queue
     msqidNA = msgget(keyNA, 0666 | IPC_CREAT);
   }
@@ -219,6 +208,12 @@ bool Joy2Ser::try_catch_message(int th, unsigned int & data, int num){
       data=pmb.mess;
     }
     break;
+  case 2:
+    if(msgrcv(msqidNA, &pmb, sizeof(unsigned int), num, IPC_NOWAIT)>0){
+      control=true;
+      data=pmb.mess;
+    }
+    break;
   }
   return control;
 }
@@ -271,10 +266,10 @@ bool Joy2Ser::NoArdMessanger(){
   joymess.inputstr[1] = (val >> 8) & 0xFF;
   joymess.inputstr[2] = val & 0xFF;
   joymess.inputstr[3] = 0xFF; // pad with zero, we want a divisor of buffer size
-  slog<<"axis "<< (int) jse.number<<" this is what we got "<<val<<endl;
+  slog<<"noard axis "<< (int) jse.number<<" this is what we got "<<val<<endl;
 
   joymess.mtype=3; // data is type 3 and control is type 2
-  if(msgsnd(msqidNA, &joymess, sizeof(joymess), 0)<=0)
+  if(msgsnd(msqidNA, &joymess, 4* sizeof(unsigned char), 0)<=0)
     return false;
   else
     return true;
@@ -301,11 +296,23 @@ void Joy2Ser::NoArdLoop(int i){
   bool control=true;
 
   struct jmessage joym;
-  
+  pwm.init(4,0x43); // odroid xu4
+  pwm.setPWMFreq (60);
+  pwm1.init(4,0x42);
+  pwm1.setPWMFreq (1500);
+  pwm.setPWM(0,0,MIDP); // center the three servos. Pan tilt steering
+  pwm.setPWM(1,0,MIDP);
+  pwm.setPWM(2,0,MIDP);
+  pwm1.setPWM(0,0,0); // zero the two DC motors
+  pwm1.setPWM(1,0,0);
+  wiringPiSetup () ;
+  pinMode (0, OUTPUT);
+  pinMode (2,OUTPUT);  
+
   while(control){
     unsigned int mess0;
     if(this->Joy2Ser::try_catch_message(i, mess0,2)){
-      slog<<"this is what I got "<<mess0<<endl;
+      slog<<" NOARD this is what I got "<<mess0<<endl;
       switch (mess0){
       case TERMINATE:
 	slog<<"I have been hit"<<endl;
@@ -317,6 +324,7 @@ void Joy2Ser::NoArdLoop(int i){
     if(msgrcv(msqidNA, &joym, 4*sizeof(unsigned char), 3, IPC_NOWAIT)>0){    
 
       axis=joym.inputstr[0];
+      slog<<"noard axis "<<(int) axis<<endl;
       if (axis==1)
 	throttle1 = (joym.inputstr[1] << 8) | joym.inputstr[2]; // pan
       else  if (axis==0)
@@ -489,11 +497,13 @@ void Joy2Ser::executioner(int i){
 			set_interface_attribs (serrfd, baud_rate, 0);  // set
 		      }
 		    }
-		  }
-		  else{
-		    cout<<"no arduino, I have not been implemented yet"<<endl;
-		    this->NoArdMessanger();
-
+		    else{
+		      //slog<<"no arduino, I have not been implemented yet"<<endl;
+		      if(this->NoArdMessanger())
+			slog<<"noard data sent succesfully"<<endl;
+		      else
+			slog<<"error sending data to noard"<<endl;
+		    }
 		  }
 		}
 		else if (num<= 0 && (errno == EAGAIN || errno==0))
@@ -560,7 +570,7 @@ void Joy2Ser::executioner(int i){
 	      fdmax = listenfdC;
 	    }
 	  }
-	  else if(ii==0){
+	  /*else if(ii==0){
 	    slog<<"ready for reading"<<endl;
 	    cin>>s;
 	    if(s=="q"){
@@ -570,7 +580,7 @@ void Joy2Ser::executioner(int i){
 		this->ship_message(TERMINATE,2,2);
 	      break;
 	    }
-	  }
+	  }*/
 	  else{
 	    int merda;
 	    int num;
