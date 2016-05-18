@@ -39,6 +39,10 @@
 #define SERVOMIN  150 // this is the 'minimum' pulse length count (out of 4096)
 #define SERVOMAX  600 // this is the 'maximum' pu
 #define MIDP SERVOMIN+(SERVOMIN+SERVOMAX)/2
+#define MSPEED 1000
+#define RES 25
+#define I2CB 4 // odroid xu4
+#define SHIT 67
 
 using namespace std;
 
@@ -72,6 +76,8 @@ class Joy2Ser
   struct sockaddr_in serv_addr, client_addr;
   struct addrinfo hints, hintsC, *res, *resC;
   int msqidC, msqidJ, msqidNA;
+  int fdmax, fdmaxC;
+  fd_set masterreadC, masterwriteC, masterread, masterwrite;
   bool arduino;
   PCA9685 pwm, pwm1;
   
@@ -85,7 +91,10 @@ class Joy2Ser
   bool SerMessanger();
   void NoArdLoop(int i);
   bool NoArdMessanger();
-  void executioner(int i); // listen for messages on thread 
+  void executioner(int i); // listen for messages on thread
+  void executionerC(int i);
+  bool internalMess(int i);
+  bool readFds(int i);
   void processJoy();
 };
 

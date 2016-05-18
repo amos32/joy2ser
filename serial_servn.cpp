@@ -137,7 +137,7 @@ Joy2Ser::Joy2Ser(const char * a, unsigned int b, const char * p, bool ard){
 
 void Joy2Ser::openthread(){
   thJS = boost::thread(boost::bind(&Joy2Ser::executioner, this, 0));
-  thC = boost::thread(boost::bind(&Joy2Ser::executioner, this, 1));
+  thC = boost::thread(boost::bind(&Joy2Ser::executionerC, this, 1));
   if(!arduino)
     thNA = boost::thread(boost::bind(&Joy2Ser::NoArdLoop, this, 2)); // no arduino thread 
 }
@@ -145,6 +145,12 @@ void Joy2Ser::openthread(){
 Joy2Ser::~Joy2Ser(){
   thJS.join();
   thC.join();// join all the threads
+  if(arduino)
+    close(serrfd);
+  else{
+    thNA.join();
+    msgctl(msqidNA, IPC_RMID, NULL);
+  }
   slog<<"I have joined all the threads"<<endl;
   msgctl(msqidC, IPC_RMID, NULL);
   msgctl(msqidJ, IPC_RMID, NULL);
@@ -153,12 +159,7 @@ Joy2Ser::~Joy2Ser(){
   close(listenfd);
   close(connfdC);
   close(listenfdC); 
-  if(arduino)
-    close(serrfd);
-  else{
-    thNA.join();
-    msgctl(msqidNA, IPC_RMID, NULL);
-  }
+ 
   slog.close();
   slog<<"closed the file"<<endl;
 }
@@ -226,11 +227,11 @@ bool Joy2Ser::SerMessanger(){
   unsigned char inputstr[4]; // do not forget unsigned or it will make a huge mess
 
   if(jse.number==2 || jse.number==5)
-    val = (__s16)(((float)(jse.value)/32767.0)*500.0+500.0);
+    val = (__s16)(((float)(jse.value)/32767.0)*(MSPEED/2.0)+(MSPEED/2.0));
   else if(jse.number==3)
     val = (__s16)(((float)(jse.value+32767)/(2.0*32767.0))*(SERVOMAX-SERVOMIN)+SERVOMIN);
   else
-    val = (__s16)(((float)(jse.value)/32767.0)*25.0);
+    val = (__s16)(((float)(jse.value)/32767.0)*RES);
   //val = (__s16)(((float)(jse.value)));
   inputstr[0] = jse.number;
   inputstr[1] = (val >> 8) & 0xFF;
@@ -256,11 +257,11 @@ bool Joy2Ser::NoArdMessanger(){
   struct jmessage joymess;
 
   if(jse.number==2 || jse.number==5)
-    val = (__s16)(((float)(jse.value)/32767.0)*500.0+500.0);
+    val = (__s16)(((float)(jse.value)/32767.0)*(MSPEED/2.0)+(MSPEED/2.0));
   else if(jse.number==3)
     val = (__s16)(((float)(jse.value+32767)/(2.0*32767.0))*(SERVOMAX-SERVOMIN)+SERVOMIN);
   else
-    val = (__s16)(((float)(jse.value)/32767.0)*25.0);
+    val = (__s16)(((float)(jse.value)/32767.0)*RES);
   //val = (__s16)(((float)(jse.value)));
   joymess.inputstr[0] = jse.number;
   joymess.inputstr[1] = (val >> 8) & 0xFF;
@@ -284,8 +285,8 @@ void Joy2Ser::NoArdLoop(int i){
   __s16 throttle1=0;
   __s16 throttle0=0;
   __s16 throttlea=0;
-  __s16 res=25;
-  float mstep=1.0/((float) res);
+  // __s16 res=25;
+  float mstep=1.0/((float) RES);
   __s16 throttle3=MIDP;
   float pos = MIDP;    // variable to store the servo position
   float pos1 = MIDP;
@@ -296,9 +297,9 @@ void Joy2Ser::NoArdLoop(int i){
   bool control=true;
 
   struct jmessage joym;
-  pwm.init(4,0x43); // odroid xu4
+  pwm.init(I2CB,0x43); // odroid xu4
   pwm.setPWMFreq (60);
-  pwm1.init(4,0x42);
+  pwm1.init(I2CB,0x42);
   pwm1.setPWMFreq (1500);
   pwm.setPWM(0,0,MIDP); // center the three servos. Pan tilt steering
   pwm.setPWM(1,0,MIDP);
@@ -310,8 +311,10 @@ void Joy2Ser::NoArdLoop(int i){
   pinMode (2,OUTPUT);  
 
   while(control){
-    unsigned int mess0;
-    if(this->Joy2Ser::try_catch_message(i, mess0,2)){
+
+    control=this->internalMess(i);
+      unsigned int mess0;
+      /*if(this->Joy2Ser::try_catch_message(i, mess0,2)){
       slog<<" NOARD this is what I got "<<mess0<<endl;
       switch (mess0){
       case TERMINATE:
@@ -319,7 +322,7 @@ void Joy2Ser::NoArdLoop(int i){
 	control=false;
 	break;
       }
-    }
+    }*/
 
     if(msgrcv(msqidNA, &joym, 4*sizeof(unsigned char), 3, IPC_NOWAIT)>0){    
 
@@ -415,30 +418,187 @@ void Joy2Ser::NoArdLoop(int i){
   }
 }
 
+bool Joy2Ser::readFds(int th){
+
+  fd_set read_fds;  // temp file descriptor list for select()
+  //fd_set write_fds;
+  struct timeval twait;
+  int fdm;
+  string s;
+  bool control=true;
+  twait.tv_sec=1;
+  twait.tv_usec=0;
+  socklen_t addr_size;
+  
+  //FD_ZERO(&write_fds);    // clear the master and temp sets
+  FD_ZERO(&read_fds);
+
+  if(th==1){
+    read_fds=masterreadC;
+    fdm=fdmaxC;
+  }
+  else{
+    read_fds=masterread;
+    fdm=fdmax;
+  }
+    
+  if (select(fdm+1, &read_fds, NULL, NULL, &twait) == -1) {
+    cout<<"error select"<<endl;
+    control=false;
+  }
+
+
+  for(int ii = 0; ii <= fdm; ii++) {
+    if (FD_ISSET(ii, &read_fds)) { 
+      if(th!=1){
+	if(ii==connfd){ // we have a connection
+	  addr_size = sizeof client_addr;
+	  listenfd = accept(connfd, (struct sockaddr *)&client_addr, &addr_size);
+	  slog<<"we have a connection"<<endl;
+	  fcntl(listenfd, F_SETFL, O_NONBLOCK); // make it non block
+	  FD_SET(listenfd, &masterread); // add to master set
+	  if (listenfd > fdmax) {    // keep track of the max
+	    fdmax = listenfd;
+	  }
+	}
+	else{ // we can read from a socket
+	  char test;
+	  if (recv(ii, &test, sizeof(test), MSG_PEEK | MSG_DONTWAIT) == 0) { // they hung up
+	    slog<<"they hung up"<<endl;
+	    close(ii);
+	    FD_CLR(ii, &masterread); // remove from master set
+	  }
+	  else{ // we are ready to read
+	    bool control1=true;
+	    while(control1){
+	      int num;
+	      num = read(ii, &jse,sizeof(jse));
+	      slog<<"num bytes read "<<num<<endl;
+	      if(num>0){ // read as much as you can
+		if(jse.type == JS_EVENT_AXIS){
+		  if(arduino){
+		    control1= this->SerMessanger(); //we send it over serial line
+		    if(!control1){
+		      slog<<"serial is down"<<endl;
+		      close(serrfd);
+		      sleep(1);
+		      slog<<"reopen serial"<<endl;
+		      serrfd = open(port, O_RDWR | O_NOCTTY | O_SYNC);
+		      if (serrfd < 0)
+			{
+			  slog<<"error opening serial "<<strerror(errno)<<endl;
+			  exit(1);
+			}
+		      sleep(1); //required to make flush work, for some reason
+		      tcflush(serrfd,TCIOFLUSH);
+		      set_interface_attribs (serrfd, baud_rate, 0);  // set
+		    }
+		  }
+		  else{
+		    //slog<<"no arduino, I have not been implemented yet"<<endl;
+		    control1=this->NoArdMessanger();
+		    if(control1)
+		      slog<<"noard data sent succesfully"<<endl;
+		    // else
+		    // slog<<"error sending data to noard"<<endl;
+		  }
+		}
+	      }
+	      else if (num<= 0 && (errno == EAGAIN || errno==0))
+		control1=false;
+	      else if (num<0 && errno!=EAGAIN && errno!=0){
+		slog<<"error reading from socket "<<strerror(errno)<<endl;
+		close(ii);
+	      FD_CLR(ii, &masterread); // remove from master set
+	      /* do something interesting with processed events */
+	      control1=false;
+	      }
+	    }
+	  }
+	}
+      }
+      else if(th==1){
+	if (ii == connfdC) {
+	  addr_size = sizeof client_addr;
+	  listenfdC = accept(connfdC, (struct sockaddr *)&client_addr, &addr_size);
+	  slog<<"we have a connection"<<endl;
+	  fcntl(listenfdC, F_SETFL, O_NONBLOCK); // make it non block
+	  FD_SET(listenfdC, &masterreadC); // add to master set
+	  if (listenfdC > fdmaxC) {    // keep track of the max
+	    fdmaxC = listenfdC;
+	  }
+	}
+	  /*else if(ii==0){
+	    slog<<"ready for reading"<<endl;
+	    cin>>s;
+	    if(s=="q"){
+	      control=false;
+	      this->ship_message(TERMINATE,0,2);
+	      if(!arduino)
+		this->ship_message(TERMINATE,2,2);
+	      break;
+	    }
+	  }*/
+	else{
+	  int merda;
+	  int num;
+	  if ((num=recv(ii, &merda, sizeof(merda), 0)) <= 0) {
+	    if (num==0)
+	      slog<<"control they hung up"<<endl;
+	    else
+	      slog<<"control error"<<endl;
+	    close(ii);
+	    FD_CLR(ii, &masterreadC); // remove from master set
+	  }
+	  else{
+	    slog<<"we received this CONTROL "<<merda<<endl;
+	    if (merda==KILL){
+	      control=false;
+	      this->ship_message(TERMINATE,0,2);
+	      if(!arduino)
+		this->ship_message(TERMINATE,2,2);
+	      break;
+	    }
+	  }
+	}
+      }
+      
+    }
+  }
+
+
+  
+  return control;
+}
+
+
 void Joy2Ser::executioner(int i){
   bool control=true;
-  bool control1=true;
+  //  bool control1=true;
    
-  fd_set master;    // master file descriptor list
+  // fd_set master;    // master file descriptor list
   fd_set read_fds;  // temp file descriptor list for select()
-  int fdmax;        // maximum file descriptor number
+  // int fdmax;        // maximum file descriptor number
   struct timeval twait;
-  int rv;
-  switch (i){
-  case 0: // joystick thread
+  //int rv;
+  //switch (i){
+  //case 0: // joystick thread
    
    
     
-    FD_ZERO(&master);    // clear the master and temp sets
-    FD_ZERO(&read_fds);
+  FD_ZERO(&masterread);    // clear the master and temp sets
+  FD_ZERO(&read_fds);
       // add the listener to the master set
-    FD_SET(connfd, &master);
+  FD_SET(connfd, &masterread);
    
     // keep track of the biggest file descriptor
-    fdmax = connfd; // so far, it's this one
+  fdmax = connfd; // so far, it's this one
    
-    while (control){
-      socklen_t addr_size;
+  while (control){
+
+    control=this->readFds(i);
+
+      /*      socklen_t addr_size;
       //struct  js_event jse;
     
       read_fds = master; // copy it
@@ -513,13 +673,19 @@ void Joy2Ser::executioner(int i){
 		  close(ii);
 		  FD_CLR(ii, &master); // remove from master set
 		  /* do something interesting with processed events */
-		  control1=false;
+      /*	  control1=false;
 		}
 	      }
 	    }
+	    
 	  }
 	}
-      }
+	
+      } */
+
+    control=this->internalMess(i);
+
+      /*
       unsigned int mess0;
       if(this->Joy2Ser::try_catch_message(i, mess0,2)){
 	slog<<"this is what I got "<<mess0<<endl;
@@ -529,21 +695,49 @@ void Joy2Ser::executioner(int i){
 	  control=false;
 	  break;
 	}
-      }    
-    }
-    break;
-  case 1: //this is the control thread
-    string s;
+      }*/    
+  }
+}
+
+
+void Joy2Ser::executionerC(int i){
+  bool control=true;
+  //  bool control1=true;
+   
+  // fd_set master;    // master file descriptor list
+  fd_set read_fds;  // temp file descriptor list for select()
+  // int fdmax;        // maximum file descriptor number
+  struct timeval twait;
+  //int rv;
+  //switch (i){
+  //case 0: // joystick thread
+   
+   
+    
+  FD_ZERO(&masterreadC);    // clear the master and temp sets
+  FD_ZERO(&read_fds);
+      // add the listener to the master set
+  FD_SET(connfdC, &masterreadC);
+   
+    // keep track of the biggest file descriptor
+  fdmax = connfd; // so far, it's this one
+   
+  //case 1: //this is the control thread
+  //string s;
        
-    FD_ZERO(&master);    // clear the master and temp sets
-    FD_ZERO(&read_fds);
+  FD_ZERO(&masterreadC);    // clear the master and temp sets
+  FD_ZERO(&read_fds);
     // add the listener to the master set
-    FD_SET(connfdC, &master);
+  FD_SET(connfdC, &masterreadC);
     //    FD_SET(0,&master);
     // keep track of the biggest file descriptor
-    fdmax = connfdC; // so far, it's this one
+  fdmaxC = connfdC; // so far, it's this one
   
-    while (control){
+  while (control){
+
+    control=this->readFds(1);
+
+      /*
       socklen_t addr_size;
       //struct  js_event jse;
       
@@ -581,7 +775,7 @@ void Joy2Ser::executioner(int i){
 	      break;
 	    }
 	  }*/
-	  else{
+      /*	  else{
 	    int merda;
 	    int num;
 	    if ((num=recv(ii, &merda, sizeof(merda), 0)) <= 0) {
@@ -605,9 +799,24 @@ void Joy2Ser::executioner(int i){
 	  }
 	}
       }
-    }
-    break;
+    }*/
   }
+}
+
+
+bool Joy2Ser::internalMess(int i){
+
+  unsigned int mess0;
+  if(this->Joy2Ser::try_catch_message(i, mess0,2)){
+    slog<<"this is what I got "<<mess0<<endl;
+    switch (mess0){
+    case TERMINATE:
+      slog<<"I have been hit"<<endl;
+      return false;
+      break;
+    }
+  }
+  return true;
 }
 
 int main(int argc, char* argv[])
