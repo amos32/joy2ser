@@ -28,6 +28,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <sys/poll.h>
 
 #define QUEUE_SIZE 1024
 #define NUM_MESSAGES 20
@@ -41,7 +42,7 @@
 #define MIDP SERVOMIN+(SERVOMIN+SERVOMAX)/2
 #define MSPEED 1000
 #define RES 25
-#define I2CB 4 // odroid xu4
+#define I2CB 1 // odroid xu4
 #define SHIT 67
 
 using namespace std;
@@ -80,6 +81,8 @@ class Joy2Ser
   fd_set masterreadC, masterwriteC, masterread, masterwrite;
   bool arduino;
   PCA9685 pwm, pwm1;
+  struct pollfd ufds[2];
+  struct pollfd ufdsC[2];  
   
  public:
   Joy2Ser(const char * a, unsigned int b, const char * p, bool ard);

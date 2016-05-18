@@ -423,56 +423,70 @@ bool Joy2Ser::readFds(int th){
   fd_set read_fds;  // temp file descriptor list for select()
   //fd_set write_fds;
   struct timeval twait;
-  int fdm;
+  int fdm=3;
   string s;
   bool control=true;
   twait.tv_sec=1;
   twait.tv_usec=0;
   socklen_t addr_size;
-  
+
+
+ 
   //FD_ZERO(&write_fds);    // clear the master and temp sets
-  FD_ZERO(&read_fds);
+  //  FD_ZERO(&read_fds);
 
-  if(th==1){
-    read_fds=masterreadC;
-    fdm=fdmaxC;
-  }
-  else{
-    read_fds=masterread;
-    fdm=fdmax;
-  }
+  // if(th==1){
+    //   read_fds=masterreadC;
+  // fdm=fdmaxC;
+  // }
+  //else{
+    //read_fds=masterread;
+    //fdm=fdmax;
+  //}
     
-  if (select(fdm+1, &read_fds, NULL, NULL, &twait) == -1) {
-    cout<<"error select"<<endl;
-    control=false;
-  }
+  // if (select(fdm+1, &read_fds, NULL, NULL, &twait) == -1) {
+  // cout<<"error select"<<endl;
+  // control=false;
+    //}
 
+  if(th!=1){
+    
+    poll(ufds, 2, 10000);
 
-  for(int ii = 0; ii <= fdm; ii++) {
-    if (FD_ISSET(ii, &read_fds)) { 
-      if(th!=1){
-	if(ii==connfd){ // we have a connection
+    for(int ii = 0; ii <= 1; ii++) {
+      if (ufds[ii].revents & POLLIN) {
+      // if (FD_ISSET(ii, &read_fds)) { 
+	// if(th!=1){
+	if(ufds[ii].fd==connfd){
+	//if(ii==connfd){ // we have a connection
 	  addr_size = sizeof client_addr;
 	  listenfd = accept(connfd, (struct sockaddr *)&client_addr, &addr_size);
 	  slog<<"we have a connection"<<endl;
 	  fcntl(listenfd, F_SETFL, O_NONBLOCK); // make it non block
-	  FD_SET(listenfd, &masterread); // add to master set
-	  if (listenfd > fdmax) {    // keep track of the max
-	    fdmax = listenfd;
-	  }
+	  //  FD_SET(listenfd, &masterread); // add to master set
+	  ufds[1].fd=listenfd;
+	  ufds[1].events=POLLIN;
+	  //  fdmax=1;
+	  // if (listenfd > fdmax) {    // keep track of the max
+	  // fdmax = listenfd;
+	  // }
 	}
 	else{ // we can read from a socket
 	  char test;
-	  if (recv(ii, &test, sizeof(test), MSG_PEEK | MSG_DONTWAIT) == 0) { // they hung up
+	  //  if (recv(ii, &test, sizeof(test), MSG_PEEK | MSG_DONTWAIT) == 0) { // they hung up
+	  if (recv(ufds[ii].fd, &test, sizeof(test), MSG_PEEK | MSG_DONTWAIT) == 0) {
 	    slog<<"they hung up"<<endl;
-	    close(ii);
-	    FD_CLR(ii, &masterread); // remove from master set
+	    //  close(ii);
+	    close(ufds[ii].fd);
+	    //fdmax=0;
+	    //  FD_CLR(ii, &masterread); // remove from master set
 	  }
 	  else{ // we are ready to read
 	    bool control1=true;
 	    while(control1){
 	      int num;
-	      num = read(ii, &jse,sizeof(jse));
+	      //num = read(ii, &jse,sizeof(jse));
+	      num = read(ufds[ii].fd, &jse,sizeof(jse));
 	      slog<<"num bytes read "<<num<<endl;
 	      if(num>0){ // read as much as you can
 		if(jse.type == JS_EVENT_AXIS){
@@ -508,47 +522,58 @@ bool Joy2Ser::readFds(int th){
 		control1=false;
 	      else if (num<0 && errno!=EAGAIN && errno!=0){
 		slog<<"error reading from socket "<<strerror(errno)<<endl;
-		close(ii);
-	      FD_CLR(ii, &masterread); // remove from master set
-	      /* do something interesting with processed events */
-	      control1=false;
+		close(ufds[ii].fd);
+		//	fdmax=0;
+		//	close(ii);
+		// FD_CLR(ii, &masterread); // remove from master set
+		/* do something interesting with processed events */
+		control1=false;
 	      }
 	    }
 	  }
 	}
       }
-      else if(th==1){
-	if (ii == connfdC) {
+    }
+  }
+  else if(th==1){
+
+    poll(ufdsC, 2, 10000);
+    
+    for(int ii = 0; ii <= 1; ii++) {    
+      if (ufdsC[ii].revents & POLLIN) {
+	if (ufdsC[ii].fd == connfdC) {
 	  addr_size = sizeof client_addr;
 	  listenfdC = accept(connfdC, (struct sockaddr *)&client_addr, &addr_size);
 	  slog<<"we have a connection"<<endl;
 	  fcntl(listenfdC, F_SETFL, O_NONBLOCK); // make it non block
-	  FD_SET(listenfdC, &masterreadC); // add to master set
-	  if (listenfdC > fdmaxC) {    // keep track of the max
-	    fdmaxC = listenfdC;
-	  }
+	  ufdsC[1].fd=listenfdC;
+	  ufdsC[1].events=POLLIN;
+	  //	FD_SET(listenfdC, &masterreadC); // add to master set
+	  //  if (listenfdC > fdmaxC) {    // keep track of the max
+	  //  fdmaxC = listenfdC;
+	  // }
 	}
-	  /*else if(ii==0){
-	    slog<<"ready for reading"<<endl;
-	    cin>>s;
-	    if(s=="q"){
-	      control=false;
-	      this->ship_message(TERMINATE,0,2);
-	      if(!arduino)
-		this->ship_message(TERMINATE,2,2);
-	      break;
-	    }
+	/*else if(ii==0){
+	  slog<<"ready for reading"<<endl;
+	  cin>>s;
+	  if(s=="q"){
+	  control=false;
+	  this->ship_message(TERMINATE,0,2);
+	  if(!arduino)
+	  this->ship_message(TERMINATE,2,2);
+	  break;
+	  }
 	  }*/
 	else{
 	  int merda;
 	  int num;
-	  if ((num=recv(ii, &merda, sizeof(merda), 0)) <= 0) {
+	  if ((num=recv(ufdsC[ii].fd, &merda, sizeof(merda), 0)) <= 0) {
 	    if (num==0)
 	      slog<<"control they hung up"<<endl;
 	    else
 	      slog<<"control error"<<endl;
-	    close(ii);
-	    FD_CLR(ii, &masterreadC); // remove from master set
+	    close(ufdsC[ii].fd);
+	    // FD_CLR(ii, &masterreadC); // remove from master set
 	  }
 	  else{
 	    slog<<"we received this CONTROL "<<merda<<endl;
@@ -565,7 +590,6 @@ bool Joy2Ser::readFds(int th){
       
     }
   }
-
 
   
   return control;
@@ -584,16 +608,18 @@ void Joy2Ser::executioner(int i){
   //switch (i){
   //case 0: // joystick thread
    
-   
+  ufds[0].fd = connfd;
+  ufds[0].events = POLLIN; // check for normal or out-of-band   
     
-  FD_ZERO(&masterread);    // clear the master and temp sets
-  FD_ZERO(&read_fds);
+  // FD_ZERO(&masterread);    // clear the master and temp sets
+  // FD_ZERO(&read_fds);
       // add the listener to the master set
-  FD_SET(connfd, &masterread);
+  // FD_SET(connfd, &masterread);
    
     // keep track of the biggest file descriptor
-  fdmax = connfd; // so far, it's this one
-   
+  // fdmax = connfd; // so far, it's this one
+  //  fdmax=0;
+  
   while (control){
 
     control=this->readFds(i);
@@ -714,24 +740,27 @@ void Joy2Ser::executionerC(int i){
    
    
     
-  FD_ZERO(&masterreadC);    // clear the master and temp sets
-  FD_ZERO(&read_fds);
+  //  FD_ZERO(&masterreadC);    // clear the master and temp sets
+  // FD_ZERO(&read_fds);
       // add the listener to the master set
-  FD_SET(connfdC, &masterreadC);
+  // FD_SET(connfdC, &masterreadC);
    
     // keep track of the biggest file descriptor
-  fdmax = connfd; // so far, it's this one
+  // fdmax = connfd; // so far, it's this one
    
   //case 1: //this is the control thread
   //string s;
        
-  FD_ZERO(&masterreadC);    // clear the master and temp sets
-  FD_ZERO(&read_fds);
+  //FD_ZERO(&masterreadC);    // clear the master and temp sets
+  //FD_ZERO(&read_fds);
     // add the listener to the master set
-  FD_SET(connfdC, &masterreadC);
+  // FD_SET(connfdC, &masterreadC);
     //    FD_SET(0,&master);
     // keep track of the biggest file descriptor
-  fdmaxC = connfdC; // so far, it's this one
+  //fdmaxC = connfdC; // so far, it's this one
+
+  ufdsC[0].fd=connfdC;
+  ufdsC[0].events=POLLIN;
   
   while (control){
 
